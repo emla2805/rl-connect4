@@ -10,41 +10,23 @@ from tf_agents.utils import common
 
 from game import Connect4Environment
 
-def eval_against_random_bots(env, trained_agents, random_agents, num_episodes):
-  """Evaluates `trained_agents` against `random_agents` for `num_episodes`."""
-  wins = np.zeros(2)
-  for player_pos in range(2):
-    if player_pos == 0:
-      cur_agents = [trained_agents[0], random_agents[1]]
-    else:
-      cur_agents = [random_agents[0], trained_agents[1]]
-    for _ in range(num_episodes):
-      time_step = env.reset()
-      while not time_step.last():
-        player_id = time_step.observations["current_player"]
-        agent_output = cur_agents[player_id].step(time_step, is_evaluation=True)
-        time_step = env.step([agent_output.action])
-      if time_step.rewards[player_pos] > 0:
-        wins[player_pos] += 1
-  return wins / num_episodes
-
 
 def eval_against_random_policy(environment, policy, num_episodes=10):
     random_policy = random_tf_policy.RandomTFPolicy(environment.time_step_spec(),
                                                     environment.action_spec())
-    total_return = 0.0
+    policies = [policy, random_policy]
+    wins = [0.0, 0.0]
     for _ in range(num_episodes):
         time_step = environment.reset()
-        episode_return = 0.0
+        player = 0
 
         while not time_step.is_last():
-            action_step = policy.action(time_step)
+            action_step = policies[player].action(time_step)
             time_step = environment.step(action_step.action)
-            episode_return += time_step.reward
-        total_return += episode_return
+            wins[player] += time_step.reward.numpy()[0]
+            player = 1 - player
 
-    avg_return = total_return / num_episodes
-    return avg_return.numpy()[0]
+    return wins
 
 
 if __name__ == "__main__":
@@ -133,3 +115,5 @@ if __name__ == "__main__":
     num_iterations = 50
     for _ in range(num_iterations):
         train_one_iteration()
+        wins = eval_against_random_policy(eval_env, agent.policy, num_episodes=100)
+        print(wins)

@@ -4,7 +4,6 @@ import numpy as np
 from numpy.lib.stride_tricks import as_strided
 
 from tf_agents.environments import py_environment
-from tf_agents.environments import tf_py_environment
 from tf_agents.environments import utils
 from tf_agents.specs import array_spec
 from tf_agents.trajectories import time_step as ts
@@ -13,7 +12,7 @@ from tf_agents.trajectories import time_step as ts
 def conv2d(a, f):
     s = f.shape + tuple(np.subtract(a.shape, f.shape) + 1)
     subM = as_strided(a, shape=s, strides=a.strides * 2)
-    return np.einsum('ij,ijkl->kl', f, subM)
+    return np.einsum("ij,ijkl->kl", f, subM)
 
 
 class Player(Enum):
@@ -24,11 +23,7 @@ class Player(Enum):
 class Connect4Environment(py_environment.PyEnvironment):
     def __init__(self):
         self._action_spec = array_spec.BoundedArraySpec(
-            shape=(),
-            dtype="int32",
-            minimum=0,
-            maximum=7 - 1,
-            name="action",
+            shape=(), dtype="int32", minimum=0, maximum=7 - 1, name="action"
         )
         self._observation_spec = array_spec.BoundedArraySpec(
             shape=(2, 6, 7),
@@ -49,6 +44,7 @@ class Connect4Environment(py_environment.PyEnvironment):
 
     def _reset(self):
         self._state = np.zeros((2, 6, 7), dtype=np.int32)
+        self._turn = 0
         self._episode_ended = False
         return ts.restart(self._state)
 
@@ -58,15 +54,21 @@ class Connect4Environment(py_environment.PyEnvironment):
 
         self._turn += 1
 
-        if action in self._legal_actions():
+        if action in self.legal_actions():
             self.make_move(action)
 
             if self.connected_four(player=Player.WHITE.value):
                 self._episode_ended = True
-                return ts.termination(self._state, reward=1.0 if self.player_turn() == Player.WHITE else -1.0)
+                return ts.termination(
+                    self._state,
+                    reward=1.0 if self.player_turn() == Player.WHITE else -1.0,
+                )
             elif self.connected_four(player=Player.BLACK.value):
                 self._episode_ended = True
-                return ts.termination(self._state, reward=1.0 if self.player_turn() == Player.BLACK else -1.0)
+                return ts.termination(
+                    self._state,
+                    reward=1.0 if self.player_turn() == Player.BLACK else -1.0,
+                )
             elif self._turn >= 42:
                 # Draw
                 self._episode_ended = True
@@ -99,10 +101,7 @@ class Connect4Environment(py_environment.PyEnvironment):
 
         return False
 
-    # def __valid_action(self, action):
-    #     return np.any(self._state[:, 0, action] == 0)
-
-    def _legal_actions(self):
+    def legal_actions(self):
         dense_state = np.max(self._state, axis=0)
         return np.where(dense_state[0, :] == 0)[0]
 
@@ -118,7 +117,7 @@ class Connect4Environment(py_environment.PyEnvironment):
         else:
             return Player.BLACK
 
-    def _render(self):
+    def render(self, mode="human"):
         print(f"\nRound: {self._turn}")
         b = self._state.copy()
         b[1][b[1] == 1] = 2
@@ -139,8 +138,3 @@ if __name__ == "__main__":
     env = Connect4Environment()
     utils.validate_py_environment(env, episodes=10)
 
-    import tensorflow as tf
-    py_env = tf_py_environment.TFPyEnvironment(env)
-    action = tf.random.uniform([1], 0, 6, dtype=tf.int32)
-
-    next_time_step = py_env.step(action)
