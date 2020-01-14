@@ -1,5 +1,3 @@
-from enum import Enum
-
 import numpy as np
 from numpy.lib.stride_tricks import as_strided
 
@@ -15,11 +13,6 @@ def conv2d(a, f):
     return np.einsum("ij,ijkl->kl", f, subM)
 
 
-class Player(Enum):
-    WHITE = 0
-    BLACK = 1
-
-
 class Connect4Environment(py_environment.PyEnvironment):
     def __init__(self):
         self._action_spec = array_spec.BoundedArraySpec(
@@ -33,7 +26,7 @@ class Connect4Environment(py_environment.PyEnvironment):
             name="observation",
         )
         self._state = np.zeros((2, 6, 7), dtype=np.int32)
-        self._turn = 0
+        self._current_player = 0
         self._episode_ended = False
 
     def action_spec(self):
@@ -44,7 +37,7 @@ class Connect4Environment(py_environment.PyEnvironment):
 
     def _reset(self):
         self._state = np.zeros((2, 6, 7), dtype=np.int32)
-        self._turn = 0
+        self._current_player = 0
         self._episode_ended = False
         return ts.restart(self._state)
 
@@ -52,31 +45,20 @@ class Connect4Environment(py_environment.PyEnvironment):
         if self._episode_ended:
             return self.reset()
 
-        self._turn += 1
-
         if action in self.legal_actions():
             self.make_move(action)
 
-            if self.connected_four(player=Player.WHITE.value):
-                self._episode_ended = True
-                return ts.termination(
-                    self._state,
-                    reward=1.0 if self.player_turn() == Player.WHITE else -1.0,
-                )
-            elif self.connected_four(player=Player.BLACK.value):
-                self._episode_ended = True
-                return ts.termination(
-                    self._state,
-                    reward=1.0 if self.player_turn() == Player.BLACK else -1.0,
-                )
-            elif self._turn >= 42:
-                # Draw
-                self._episode_ended = True
-                return ts.termination(self._state, reward=0.0)
-            else:
-                return ts.transition(self._state, reward=0.0)
-
-        return ts.transition(self._state, reward=0.0)
+        if self.connected_four(player=0):
+            self._episode_ended = True
+            self._current_player = 1 - self._current_player
+            return ts.termination(self._state, reward=1.0)
+        elif self.board_full():  # Draw
+            self._episode_ended = True
+            self._current_player = 1 - self._current_player
+            return ts.termination(self._state, reward=0.0)
+        else:
+            self._current_player = 1 - self._current_player
+            return ts.transition(self._state, reward=0.0)
 
     def connected_four(self, player):
         # Horizontal
@@ -109,13 +91,11 @@ class Connect4Environment(py_environment.PyEnvironment):
         dense_state = np.max(self._state, axis=0)
         free_rows = np.where(dense_state[:, action] == 0)[0]
 
-        self._state[self.player_turn().value, free_rows[-1], action] = 1
+        self._state[self._current_player, free_rows[-1], action] = 1
 
-    def player_turn(self):
-        if self._turn % 2 == 0:
-            return Player.WHITE
-        else:
-            return Player.BLACK
+    def board_full(self):
+        dense_state = np.max(self._state, axis=0)
+        return np.all(dense_state == 1)
 
     def render(self, mode="human"):
         print(f"\nRound: {self._turn}")
@@ -137,4 +117,3 @@ class Connect4Environment(py_environment.PyEnvironment):
 if __name__ == "__main__":
     env = Connect4Environment()
     utils.validate_py_environment(env, episodes=10)
-

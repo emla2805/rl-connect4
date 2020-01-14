@@ -38,7 +38,7 @@ def eval_against_random_policy(env, policy, num_episodes=10):
     return wins
 
 
-@tf.function
+# @tf.function
 def collect_step(env, policy, buffer):
     time_step = env.current_time_step()
     action_step = policy.action(time_step)
