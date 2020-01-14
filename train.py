@@ -1,56 +1,72 @@
 import tensorflow as tf
 from tf_agents.agents.dqn import dqn_agent
-from tf_agents.drivers import dynamic_step_driver
 
 from tf_agents.environments import tf_py_environment, parallel_py_environment
 from tf_agents.networks import q_network
 from tf_agents.policies import random_tf_policy
 from tf_agents.replay_buffers import tf_uniform_replay_buffer
+from tf_agents.trajectories import trajectory
 from tf_agents.utils import common
 
 from game import Connect4Environment
 
 
-def eval_against_random_policy(environment, policy, num_episodes=10):
-    random_policy = random_tf_policy.RandomTFPolicy(environment.time_step_spec(),
-                                                    environment.action_spec())
-    policies = [policy, random_policy]
+def eval_against_random_policy(env, policy, num_episodes=10):
+    random_policy = random_tf_policy.RandomTFPolicy(
+        env.time_step_spec(), env.action_spec()
+    )
     wins = [0.0, 0.0]
-    for _ in range(num_episodes):
-        time_step = environment.reset()
-        player = 0
+    for player_pos in range(2):
+        if player_pos == 0:
+            policies = [policy, random_policy]
+        else:
+            policies = [random_policy, policy]
 
-        while not time_step.is_last():
-            action_step = policies[player].action(time_step)
-            time_step = environment.step(action_step.action)
-            wins[player] += time_step.reward.numpy()[0]
-            player = 1 - player
+        for _ in range(num_episodes):
+            time_step = env.reset()
+            player = 0
+
+            while not time_step.is_last():
+                action_step = policies[player].action(time_step)
+                time_step = env.step(action_step.action)
+                if player_pos == 0:
+                    wins[player] += time_step.reward.numpy()[0]
+                else:
+                    wins[1 - player] += time_step.reward.numpy()[0]
+                player = 1 - player
 
     return wins
 
 
+@tf.function
+def collect_step(env, policy, buffer):
+    time_step = env.current_time_step()
+    action_step = policy.action(time_step)
+    next_time_step = env.step(action_step.action)
+    traj = trajectory.from_transition(time_step, action_step, next_time_step)
+
+    buffer.add_batch(traj)
+
+
 if __name__ == "__main__":
-    # train_py_env = Connect4Environment()
-    eval_py_env = Connect4Environment()
-    # train_env = tf_py_environment.TFPyEnvironment(train_py_env)
     train_env = tf_py_environment.TFPyEnvironment(
         parallel_py_environment.ParallelPyEnvironment(
             [Connect4Environment] * 16
         )
     )
-
+    eval_py_env = Connect4Environment()
     eval_env = tf_py_environment.TFPyEnvironment(eval_py_env)
 
+    num_iterations = 10000
     collect_steps_per_iteration = 100
-    replay_buffer_capacity = 100000
+    replay_buffer_capacity = 100_000
 
     fc_layer_params = (100,)
 
     batch_size = 64
     learning_rate = 1e-3
-    log_interval = 5
+    log_interval = 200
 
-    num_eval_episodes = 10
     eval_interval = 1000
 
     q_net = q_network.QNetwork(
@@ -79,18 +95,6 @@ if __name__ == "__main__":
         max_length=replay_buffer_capacity,
     )
 
-    collect_driver = dynamic_step_driver.DynamicStepDriver(
-        train_env,
-        agent.collect_policy,
-        observers=[replay_buffer.add_batch],
-        num_steps=collect_steps_per_iteration,
-    )
-
-    # Initial data collection
-    collect_driver.run()
-
-    # Dataset generates trajectories with shape [BxTx...] where
-    # T = n_step_update + 1.
     dataset = replay_buffer.as_dataset(
         num_parallel_calls=3, sample_batch_size=batch_size, num_steps=2
     ).prefetch(3)
@@ -99,21 +103,28 @@ if __name__ == "__main__":
 
     agent.train = common.function(agent.train)
 
-    def train_one_iteration():
+    random_policy = random_tf_policy.RandomTFPolicy(
+        train_env.time_step_spec(), train_env.action_spec()
+    )
 
-        # Collect a few steps using collect_policy and save to the replay buffer.
-        for _ in range(collect_steps_per_iteration):
-            collect_driver.run()
+    # Collect initial data
+    for _ in range(200):
+        collect_step(train_env, random_policy, replay_buffer)
 
-        # Sample a batch of data from the buffer and update the agent's network.
-        experience, unused_info = next(iterator)
-        train_loss = agent.train(experience)
-
-        iteration = agent.train_step_counter.numpy()
-        print("iteration: {0} loss: {1}".format(iteration, train_loss.loss))
-
-    num_iterations = 50
     for _ in range(num_iterations):
-        train_one_iteration()
-        wins = eval_against_random_policy(eval_env, agent.policy, num_episodes=100)
-        print(wins)
+
+        for _ in range(collect_steps_per_iteration):
+            collect_step(train_env, agent.collect_policy, replay_buffer)
+
+        experience, unused_info = next(iterator)
+        train_loss = agent.train(experience).loss
+
+        step = agent.train_step_counter.numpy()
+        if step % log_interval == 0:
+            print(f"Step: {step}, Loss: {train_loss}")
+
+        if step % eval_interval == 0:
+            wins = eval_against_random_policy(
+                eval_env, agent.policy, num_episodes=100
+            )
+            print(f"Step: {step}, [Wins, Losses]: {wins}")
